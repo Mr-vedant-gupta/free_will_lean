@@ -37,6 +37,8 @@ of the O(3) rotation group to write proofs using WLOG. The main proof is in **Ko
     ├── **KochenSpecker.lean**    # Main proof of the paradox
     └── Requirements.lean   
 ```
+## Link
+In case you're not already here: github.com/Mr-vedant-gupta/free_will_lean/
 
 ## References
 
