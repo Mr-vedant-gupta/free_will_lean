@@ -1,496 +1,199 @@
-/- Copyright © 2018–2023 Anne Baanen, Alexander Bentkamp, Jasmin Blanchette,
-Johannes Hölzl, and Jannis Limperg. See `LICENSE.txt`. -/
+import FreeWillLean.Requirements
+import Mathlib
 
-import Aesop
-import Mathlib.Algebra.Field.Defs
-import Mathlib.Data.Finset.Basic
-import Mathlib.Tactic.Linarith
-import Mathlib.Tactic.Ring
-
-
-/- # LoVelib: Logical Verification Library -/
-
-
-set_option autoImplicit false
-set_option tactic.hygienic false
-set_option linter.unusedVariables false
-
-open Lean
-open Lean.Parser
-open Lean.Parser.Term
-open Lean.Meta
-open Lean.Elab.Tactic
-open Lean.TSyntax
+/- This file defines the necessary data types and helper lemmas to prove the Kochen-Specker Paradox -/
 
 namespace FreeWillLean
 
+/- Binary outcomes for a spin measurement -/
+inductive SpinMeasurement : Type
+| zero
+| one
 
-/- ## Structured Proofs -/
+open SpinMeasurement
+open scoped Matrix
 
-@[term_parser] def «fix» :=
-  leading_parser withPosition ("fix " >> many1 Term.ident >> " : " >> termParser)
-  >> optSemicolon termParser
+instance : DecidableEq SpinMeasurement :=
+  fun x y => match x, y with
+    | zero, zero => isTrue rfl
+    | one, one => isTrue rfl
+    | zero, one => isFalse (by simp)
+    | one, zero => isFalse (by simp)
 
-@[term_parser] def «assume» :=
-  leading_parser withPosition ("assume " >> Term.ident >> " : " >> termParser)
-  >> optSemicolon termParser
+/-- Measurement direction definitions and properties -/
 
-macro_rules
-| `(fix $x* : $ty; $y) => `(fun $x* : $ty ↦ $y)
-| `(assume $h : $ty; $y) => `(fun $h : $ty ↦ $y)
+@[simp]
+def SquaredNorm (v : Fin 3 → ℝ) : ℝ :=
+  Matrix.dotProduct v v
 
+/-- A measurement direction is a unit vector in 3D space -/
+def MeasurementDirection : Type :=
+  {v : Fin 3 → ℝ // SquaredNorm v = 1}
 
-/- ## Natural Numbers -/
+@[simp]
+def MeasurementDirection.index (d : MeasurementDirection) (i : Fin 3) : ℝ :=
+  d.val i
 
-theorem Nat.two_mul (n : ℕ) :
-  2 * n = n + n :=
-  by ring
+notation d "[" i "]" => MeasurementDirection.index d i
 
-@[simp] theorem Nat.add_sub_again (m n : ℕ) :
-  m + n - m = n :=
+theorem MeasurementDirection.norm_def (v : MeasurementDirection) :
+  v[0] ^ 2 + v[1] ^ 2 + v[2] ^ 2 = 1 :=
+by
+  have hnorm : Matrix.dotProduct v.1 v.1 = 1 := by apply v.2
+  rw [Matrix.dotProduct] at hnorm
+  rw [Fin.sum_univ_succ, Fin.sum_univ_succ, Fin.sum_univ_succ] at hnorm
+  simp at hnorm
+  repeat rw [MeasurementDirection.index]
+  calc
+    v.val 0 ^ 2 + v.val 1 ^ 2 + v.val 2 ^ 2 = v.val 0 * v.val 0 + (v.val 1 * v.val 1 + v.val 2 * v.val 2) := by ring
+    _ = 1 := by exact hnorm
+
+/-- Perpendicularity definitions for measurement directions -/
+
+def IsPerpendicular (d1 d2 : MeasurementDirection) : Prop :=
+  Matrix.dotProduct d1.val d2.val = 0
+
+def IsMutuallyPerpendicular(d1 d2 d3 : MeasurementDirection) : Prop :=
+  IsPerpendicular d1 d2 ∧ IsPerpendicular d2 d3 ∧ IsPerpendicular d1 d3
+
+/-- Valid measurement outcomes for mutually perpendicular directions (see: SPIN axoim) -/
+
+def ValidThriples : List (List SpinMeasurement) :=
+  [[zero, one, one], [one, zero, one], [one, one, zero]]
+
+/-- One-Zero-One functions and their properties -/
+
+def IsOneZeroOneFunc (f : MeasurementDirection → SpinMeasurement) : Prop :=
+  ∀ d1 d2 d3 : MeasurementDirection, IsMutuallyPerpendicular d1 d2 d3 → [f d1, f d2, f d3] ∈ ValidThriples
+
+def OneZeroOneFunc : Type :=
+  {f : (MeasurementDirection → SpinMeasurement) // IsOneZeroOneFunc f}
+
+def apply (f : OneZeroOneFunc) (a : MeasurementDirection) : SpinMeasurement :=
+  f.val a
+
+/-- O3 group definitions and properties -/
+
+structure O3 where
+  matrix : Matrix (Fin 3) (Fin 3) ℝ
+  is_orth : matrix ∈ Matrix.orthogonalGroup (Fin 3) ℝ
+
+instance : Coe O3 (Matrix (Fin 3) (Fin 3) ℝ) :=
+ {coe := fun m => m.matrix}
+
+theorem O3.dot_product_preservation (v1 v2 : Fin 3 → ℝ) (m : O3) :
+  (m.matrix *ᵥ v1) ⬝ᵥ (m *ᵥ v2) = v1 ⬝ᵥ v2 :=
+by
+  have horth : mᵀ * m.matrix = 1 := by apply (Iff.mp (Matrix.mem_orthogonalGroup_iff' (Fin 3) ℝ)) m.is_orth
+  calc
+    m *ᵥ v1 ⬝ᵥ m *ᵥ v2  = (m *ᵥ v1) ᵥ* m ⬝ᵥ v2 := by exact Matrix.dotProduct_mulVec (m *ᵥ v1) m.matrix v2
+    _ = v1 ᵥ* (mᵀ * m.matrix) ⬝ᵥ v2 := by rw [Matrix.vecMul_mulVec]
+    _ = v1 ⬝ᵥ v2 := by simp [horth]
+
+theorem O3.norm_preservation (v : Fin 3 → ℝ) (m : O3) :
+  SquaredNorm (m *ᵥ v) = SquaredNorm v :=
+by
+  rw [SquaredNorm, SquaredNorm]
+  exact O3.dot_product_preservation v v m
+
+def O3.function (o : O3) : MeasurementDirection → MeasurementDirection :=
+  fun d => ⟨o *ᵥ d.val, by rw [O3.norm_preservation] ; exact d.2⟩
+
+/- Transforming the input of a 101-function using an O3-matrix produces a new 101-function.
+This result is key in shortening the proof of kochen-specker since it lets us make "WLOG"
+arguments by exploiting symmetries -/
+
+theorem O3.OneZeroOneFunc_invariance (f : MeasurementDirection → SpinMeasurement)  (m : O3) :
+  IsOneZeroOneFunc f → IsOneZeroOneFunc (f ∘ m.function) :=
+by
+  intro hf
+  rw [IsOneZeroOneFunc] at *
+  intro d1 d2 d3 hperp
+  repeat rw [Function.comp] ; repeat rw [O3.function]
+  apply hf ; rw [IsMutuallyPerpendicular] at * ; repeat (rw [IsPerpendicular] at *)
+  apply And.intro
+  { rw [O3.dot_product_preservation] ; exact hperp.left}
+  { apply And.intro
+    {rw [O3.dot_product_preservation] ; exact hperp.right.left}
+    {rw [O3.dot_product_preservation] ; exact hperp.right.right}
+  }
+
+def O3.compose_OneZeroOneFunc (f : OneZeroOneFunc) (m : O3) : OneZeroOneFunc :=
+  ⟨f.val ∘ m.function, by exact O3.OneZeroOneFunc_invariance f.val m f.property⟩
+
+/-- Cross product definition, along with a proof that it preserves norm when acting on perpendicular unit vectors.
+This is used in `perp_zero_implies_one` to "complete the basis" given two orthonormal vectors -/
+
+def CrossProduct (d1 d2 : MeasurementDirection) (hperp : IsPerpendicular d1 d2): MeasurementDirection :=
+  ⟨!₂[d1[1] * d2[2] - d1[2] * d2[1], d1[2] * d2[0] - d1[0] * d2[2], d1[0] * d2[1] - d1[1] * d2[0]],
   by
-    induction m with
-    | zero => simp
-    | succ m' ih => rw [Nat.succ_add, Nat.succ_sub_succ, ih]
-
-@[simp] theorem Nat.sub_one_add (n m : ℕ) (h : ¬ n = 0) :
-  n - 1 + m = n + m - 1 :=
-  by
-    induction n with
-    | zero => aesop
-    | succ =>
-      rw [Nat.succ_add]
-      aesop
-
-@[simp] theorem Nat.plus_lt_plus_right (l m n : ℕ) :
-  m + l < n + l ↔ m < n :=
-  by
-    apply Iff.intro
-    { intro h
-      apply Nat.lt_of_add_lt_add_right h }
-    { intro h
-      apply Nat.add_lt_add_right h }
-
-@[simp] theorem Nat.plus_le_plus_right (l m n : ℕ) :
-  m + l ≤ n + l ↔ m ≤ n :=
-  by
-    apply Iff.intro
-    { intro h
-      apply Nat.le_of_add_le_add_right h }
-    { intro h
-      apply Nat.add_le_add_right h }
-
-@[simp] theorem Nat.le_lt_imp (m n : ℕ) (p : Prop) (hge : m ≥ n) :
-  (m < n → p) ↔ True :=
-  by
-    apply Iff.intro
-    { intro himp
-      apply True.intro }
-    { intro htrue
-      intro hlt
-      have hle : n ≤ m :=
-        hge
-      rw [←Nat.not_lt_eq] at hle
-      apply False.elim
-      exact hle hlt }
-
-@[simp] theorem Nat.lt_succ {m n : ℕ} :
-  Nat.succ m < Nat.succ n ↔ m < n :=
-  by
-    apply Iff.intro
-    { apply Nat.lt_of_succ_lt_succ }
-    { apply Nat.succ_lt_succ }
-
-@[simp] theorem Nat.le_succ {m n : ℕ} :
-  Nat.succ m ≤ Nat.succ n ↔ m ≤ n :=
-  by
-    apply Iff.intro
-    { apply Nat.le_of_succ_le_succ }
-    { apply Nat.succ_le_succ }
-
-
-/- ## Integers -/
-
-@[simp] theorem Int.neg_neg :
-  Int.neg ∘ Int.neg = id :=
-  by
-    apply funext
-    intro i
     simp
-    cases i with
-    | ofNat n =>
-      { simp [Int.neg]
-        cases n
-        { rfl }
-        { simp [Int.negOfNat] } }
-    | negSucc n =>
-      { simp [Int.neg]
-        have hnp1 : (↑n + 1 : ℤ) = ↑(n + 1) :=
-          by simp
-        rw [hnp1]
-        rfl }
-
-attribute [simp] Int.mul_eq_zero
-
-@[simp] theorem Int.zero_eq_mul {a b : Int} :
-  0 = a * b ↔ a = 0 ∨ b = 0 :=
-  by
-    rw [eq_comm]
-    exact Int.mul_eq_zero
-
-
-/- ## Rationals -/
-
-@[simp] theorem Rat.div_two_add_div_two (x : ℚ) :
-  x / 2 + x / 2 = x :=
-  by
-    have hxx : x + x = 2 * x :=
-      by linarith
-    have hxx2 : (x + x) / 2 = (2 * x) / 2 :=
-      by rw [hxx]
-    have hx2x2 : x / 2 + x / 2 = (2 * x) / 2 :=
-      by
-        rw [←hxx2]
-        rw [add_div]
-    rw [hx2x2]
-    ring
-
-
-/- ## Lists -/
-
-@[simp] theorem List.count_nil {α : Type} [BEq α] (x : α) :
-  List.count x [] = 0 :=
-  by rfl
-
--- theorem List.countp.go_accum {α : Type} (p : α → Bool) (as : List α) (acc : ℕ) :
---   List.countp.go p as acc = List.countp p as + acc :=
---   by
---     induction as generalizing acc with
---     | nil           => simp [List.countp.go, List.countp]
---     | cons a as' ih =>
---       simp [List.countp, List.countp.go]
---       cases Classical.em (p a) with
---       | inl hp =>
---         simp [hp, ih]
---         ac_rfl
---       | inr hp => simp [hp, ih]
-
-@[simp] theorem List.count_cons {α : Type} [BEq α] (x a : α) (as : List α) :
-  List.count x (a :: as) = (bif a == x then 1 else 0) + List.count x as :=
-  by
-    cases Classical.em (a == x) with
-    | inl hx =>
-      simp [hx, List.count]
-      ac_rfl
-    | inr hx =>
-      simp [hx, List.count]
-
-@[simp] theorem List.count_append {α : Type} [BEq α] (x : α) (as bs : List α) :
-  List.count x (as ++ bs) = List.count x as + List.count x bs :=
-  by
-    induction as with
-    | nil           => simp
-    | cons a as' ih =>
-      simp [ih]
-      ac_rfl
-
-
-/- ## Sets -/
-
-@[simp] theorem Set.Mem_empty {α : Type} (a : α) :
-  a ∈ (∅ : Set α) ↔ False :=
-  by simp [Membership.mem, Set.Mem, EmptyCollection.emptyCollection]
-
-@[simp] theorem Set.compreh_False {α : Type} :
-  {a | False} = (∅ : Set α) :=
-  by rfl
-
-@[aesop norm simp] theorem Set.subseteq_def {α : Type} (A B : Set α) :
-  A ⊆ B ↔ ∀a, a ∈ A → a ∈ B :=
-  by rfl
-
-@[simp] theorem Set.Mem_singleton {α : Type} (a b : α) :
-  a ∈ ({b} : Set α) ↔ a = b :=
-  by rfl
-
-@[simp] theorem Set.Mem_compreh {α : Type} (A : Set α) :
-  {a | a ∈ A} = A :=
-  by rfl
-
-@[simp] theorem Set.compreh_Mem {α : Type} (a : α) (P : α → Prop) :
-  a ∈ ({a | P a} : Set α) ↔ P a :=
-  by rfl
-
-@[simp] theorem Set.empty_union {α : Type} (A : Set α) :
-  ∅ ∪ A = A :=
-  by simp [Union.union, Set.union]
-
-@[simp] theorem Set.union_empty {α : Type} (A : Set α) :
-  A ∪ ∅ = A :=
-  by simp [Union.union, Set.union]
-
-@[simp] theorem Set.Mem_union {α : Type} (a : α) (A B : Set α) :
-  a ∈ A ∪ B ↔ a ∈ A ∨ a ∈ B :=
-  by rfl
-
-theorem Set.unordered_pair_comm {α : Type} (a b : α) :
-  ({a, b} : Set α) = ({b, a} : Set α) :=
-  by
-    apply Set.ext
-    aesop
-
-instance Set.PartialOrder {α : Type} : PartialOrder (Set α) :=
-  { le               := fun A B ↦ A ⊆ B,
-    lt               := fun A B ↦ A ⊆ B ∧ A ≠ B,
-    le_refl          :=
-      by
-        intro A a ha
-        assumption
-    le_trans         :=
-      by
-        intro A B C hAB hBC a ha
-        aesop,
-    lt_iff_le_not_le :=
-      by
-        intro A B
-        apply Iff.intro
-        { intro hAB
-          simp [LT.lt, LE.le] at *
-          cases hAB with
-          | intro hsseq hneq =>
-            apply And.intro
-            { assumption }
-            { intro hflip
-              apply hneq
-              apply Set.ext
-              aesop } }
-        { intro hAB
-          simp [LT.lt, LE.le] at *
-          aesop },
-    le_antisymm      :=
-      by
-        intro A B hAB hBA
-        apply Set.ext
-        aesop }
-
-@[simp] theorem Set.le_def {α : Type} (A B : Set α) :
-  A ≤ B ↔ A ⊆ B :=
-  by rfl
-
-@[simp] theorem Set.lt_def {α : Type} (A B : Set α) :
-  A < B ↔ A ⊆ B ∧ A ≠ B :=
-  by rfl
-
-inductive Set.Finite {α : Type} : Set α → Prop where
-  | empty : Set.Finite {}
-  | insert (a : α) (A : Set α) : Set.Finite A → Set.Finite (insert a A)
-
-
-/- ## Relations -/
-
-def Id {α : Type} : Set (α × α) :=
-  {ab | Prod.snd ab = Prod.fst ab}
-
-@[simp] theorem mem_Id {α : Type} (a b : α) :
-  (a, b) ∈ @Id α ↔ b = a :=
-  by rfl
-
-def comp {α : Type} (r₁ r₂ : Set (α × α)) : Set (α × α) :=
-  {ac | ∃b, (Prod.fst ac, b) ∈ r₁ ∧ (b, Prod.snd ac) ∈ r₂}
-
-infixl:90 " ◯ " => comp
-
-@[simp] theorem mem_comp {α : Type} (r₁ r₂ : Set (α × α)) (a b : α) :
-  (a, b) ∈ r₁ ◯ r₂ ↔ (∃c, (a, c) ∈ r₁ ∧ (c, b) ∈ r₂) :=
-  by rfl
-
-def restrict {α : Type} (r : Set (α × α)) (p : α → Prop) :
-  Set (α × α) :=
-  {ab | ab ∈ r ∧ p (Prod.fst ab)}
-
-infixl:90 " ⇃ " => restrict
-
-@[simp] theorem mem_restrict {α : Type} (r : Set (α × α))
-    (P : α → Prop) (a b : α) :
-  (a, b) ∈ r ⇃ P ↔ (a, b) ∈ r ∧ P a :=
-  by rfl
-
-
-/- ## Reflexive Transitive Closure -/
-
-inductive RTC {α : Type} (R : α → α → Prop) (a : α) : α → Prop
-  | refl : RTC R a a
-  | tail (b c) (hab : RTC R a b) (hbc : R b c) : RTC R a c
-
-namespace RTC
-
-theorem trans {α : Type} {R : α → α → Prop} {a b c : α} (hab : RTC R a b)
-    (hbc : RTC R b c) :
-  RTC R a c :=
-  by
-    induction hbc with
-    | refl =>
-      assumption
-    | tail c d hbc hcd hac =>
-      apply tail <;>
-        assumption
-
-theorem single {α : Type} {R : α → α → Prop} {a b : α} (hab : R a b) :
-  RTC R a b :=
-  tail _ _ refl hab
-
-theorem head {α : Type} {R : α → α → Prop} (a b c : α) (hab : R a b)
-    (hbc : RTC R b c) :
-  RTC R a c :=
-  by
-    induction hbc with
-    | refl =>
-      exact tail _ _ refl hab
-    | tail c d hbc hcd hac =>
-      apply tail <;>
-        assumption
-
-theorem head_induction_on {α : Type} {R : α → α → Prop} {b : α}
-  {P : ∀a : α, RTC R a b → Prop} {a : α} (h : RTC R a b)
-  (refl : P b refl)
-  (head : ∀a c (h' : R a c) (h : RTC R c b),
-     P c h → P a (RTC.head _ _ _ h' h)) :
-  P a h :=
-  by
-    induction h with
-    | refl =>
-      exact refl
-    | tail b' c _ hb'c ih =>
-      apply ih (P := fun a hab' ↦ P a (RTC.tail _ _ hab' hb'c))
-      { exact head _ _ hb'c _ refl }
-      { intro x y hxy hyb' hy
-        exact head _ _ hxy _ hy }
-
-theorem lift {α β : Type} {R : α → α → Prop} {S : β → β → Prop} {a b : α}
-    (f : α → β) (hf : ∀a b, R a b → S (f a) (f b)) (hab : RTC R a b) :
-  RTC S (f a) (f b) :=
-  by
-    induction hab with
-    | refl => apply refl
-    | tail b c hab hbc ih =>
-      apply tail
-      apply ih
-      apply hf
-      exact hbc
-
-theorem mono {α : Type} {R R' : α → α → Prop} {a b : α} :
-  (∀a b, R a b → R' a b) → RTC R a b → RTC R' a b :=
-  lift id
-
-theorem RTC_RTC_eq {α : Type} {R : α → α → Prop} :
-  RTC (RTC R) = RTC R :=
-  funext
-    (fix a : α
-     funext
-       (fix b : α
-        propext (Iff.intro
-          (assume h : RTC (RTC R) a b
-           by
-             induction h with
-             | refl => exact refl
-             | tail b c hab' hbc ih =>
-               apply trans <;>
-                 assumption)
-          (mono
-             (fix a b : α
-              single)))))
-
-end RTC
-
-
-/- ## Setoids -/
-
-attribute [simp] Setoid.refl
-
-
-/- ## Metaprogramming -/
-
-def cases (id : FVarId) : TacticM Unit :=
-  do
-    liftMetaTactic (fun goal ↦
-      do
-        let subgoals ← MVarId.cases goal id
-        pure (List.map (fun subgoal ↦
-            InductionSubgoal.mvarId (CasesSubgoal.toInductionSubgoal subgoal))
-          (Array.toList subgoals)))
-
-
-/- ## States -/
-
-def State : Type :=
-  String → ℕ
-
-def State.update (name : String) (val : ℕ) (s : State) : State :=
-  fun name' ↦ if name' = name then val else s name'
-
-macro s:term "[" name:term "↦" val:term "]" : term =>
-  `(State.update $name $val $s)
-
-@[simp] theorem update_apply (name : String) (val : ℕ) (s : State) :
-  (s[name ↦ val]) name = val :=
-  by
-    apply if_pos
-    rfl
-
-@[simp] theorem update_apply_neq (name name' : String) (val : ℕ) (s : State)
-    (hneq : name' ≠ name) :
-  (s[name ↦ val]) name' = s name' :=
-  by
-    apply if_neg
-    assumption
-
-@[simp] theorem update_override (name : String) (val₁ val₂ : ℕ) (s : State) :
-  s[name ↦ val₂][name ↦ val₁] = s[name ↦ val₁] :=
-  by
-    apply funext
-    intro name'
-    cases Classical.em (name' = name) with
-    | inl h => simp [h]
-    | inr h => simp [h]
-
-@[simp] theorem update_swap (name₁ name₂ : String) (val₁ val₂ : ℕ) (s : State)
-    (hneq : name₁ ≠ name₂) :
-  s[name₂ ↦ val₂][name₁ ↦ val₁] = s[name₁ ↦ val₁][name₂ ↦ val₂] :=
-  by
-    apply funext
-    intro name'
-    cases Classical.em (name' = name₁) with
-    | inl h => simp [*]
-    | inr h =>
-      cases Classical.em (name' = name₁) with
-      | inl h => simp [*]
-      | inr h => simp [State.update, *]
-
-@[simp] theorem update_id (name : String) (s : State) :
-  s[name ↦ s name] = s :=
-  by
-    apply funext
-    intro name'
-    simp [State.update]
-    intro heq
-    simp [*]
-
-@[simp] theorem update_same_const (name : String) (val : ℕ) :
-  (fun _ ↦ val)[name ↦ val] = (fun _ ↦ val) :=
-  by
-    apply funext
-    simp [State.update]
-
-example (s : State) :
-  s["a" ↦ 0]["a" ↦ 2] = s["a" ↦ 2] :=
-  by simp
-
-example (s : State) :
-  s["a" ↦ 0]["b" ↦ 2] = s["b" ↦ 2]["a" ↦ 0] :=
-  by simp
-
-example (s : State) :
-  s["a" ↦ s "a"]["b" ↦ 0] = s["b" ↦ 0] :=
-  by simp
+    rw [IsPerpendicular, Matrix.dotProduct] at hperp
+    repeat rw [Fin.sum_univ_succ] at *; simp at * ; ring_nf at *
+
+    let a := d1[0]
+    let b := d1[1]
+    let c := d1[2]
+    let x := d2[0]
+    let y := d2[1]
+    let z := d2[2]
+
+    have hnd1 : a^2 + b^2 + c^2 = 1 := d1.norm_def
+    have hnd2 : x^2 + y^2 + z^2 = 1 := d2.norm_def
+    have h0 : d1[1] * d2[1] + d2[2] * d1[2] + d2[0] * d1[0] = 0 :=
+      by simp [MeasurementDirection.index] ; exact hperp
+    have hab : a^2 + b^2 = 1 - c^2 := by rw [←hnd1] ; ring
+    have hbc : b^2 + c^2 = 1 - a^2 := by rw [←hnd1] ; ring
+    have hca : c^2 + a^2 = 1 - b^2 := by rw [←hnd1] ; ring
+    calc
+      (-(b * z * c * y * 2) - b * y * x * a * 2 + b ^ 2 * z ^ 2 +
+      (b ^ 2 * x ^ 2 - z * c * x * a * 2) + z ^ 2 * a ^ 2 + c ^ 2 * y ^ 2 +
+      c ^ 2 * x ^ 2 + y ^ 2 * a ^ 2) =
+      (x ^ 2 * (b ^ 2 + c ^ 2) + y ^ 2 * (c ^ 2 + a ^ 2) + z ^ 2 * (a ^ 2 + b ^ 2)
+      - (2 * b * z * c * y + 2 * b * y * x * a + 2 * z * c * x * a)) := by ring_nf
+      _ = (x ^ 2 * (1 - a ^ 2) + y ^ 2 * (1 - b ^ 2) + z ^ 2 * (1 - c ^ 2)
+      - (2 * b * z * c * y + 2 * b * y * x * a + 2 * z * c * x * a)) := by rw [hab, hbc, hca]
+      _ = (x ^ 2 + y ^ 2 + z ^ 2 - (b * y + z * c + x * a) ^ 2) := by ring_nf
+      _ = 1 := by rw [hnd2, h0] ; simp⟩
+
+/-- Helper lemmas based on properties of One-Zero-One functions -/
+
+theorem perp_zero_implies_one (f : OneZeroOneFunc) (d1 d2 : MeasurementDirection) :
+  apply f d1 = zero → IsPerpendicular d1 d2 → apply f d2 = one :=
+by
+  intro hd1z hperp12
+  have hperp13 : IsPerpendicular d1 (CrossProduct d1 d2 hperp12) := by
+    rw [IsPerpendicular, CrossProduct, Matrix.dotProduct] ; simp [MeasurementDirection.index]
+    rw [Fin.sum_univ_succ, Fin.sum_univ_succ, Fin.sum_univ_succ]; simp ; ring
+  have hperp23 : IsPerpendicular d2 (CrossProduct d1 d2 hperp12) := by
+    rw [IsPerpendicular, CrossProduct, Matrix.dotProduct] ; simp [MeasurementDirection.index]
+    rw [Fin.sum_univ_succ, Fin.sum_univ_succ, Fin.sum_univ_succ]; simp ; ring
+  have hmutualperp : IsMutuallyPerpendicular d1 d2 (CrossProduct d1 d2 hperp12) := by
+    rw [IsMutuallyPerpendicular]
+    apply And.intro hperp12 (And.intro hperp23 hperp13)
+  have hvalidthrip : [apply f d1, apply f d2, apply f (CrossProduct d1 d2 hperp12)] ∈ ValidThriples :=
+    f.2 d1 d2 (CrossProduct d1 d2 hperp12) hmutualperp
+  rw [hd1z] at hvalidthrip
+  rw [ValidThriples] at hvalidthrip ; simp at hvalidthrip
+  exact hvalidthrip.left
+
+theorem perp_one_one_implies_zero (f : OneZeroOneFunc) ( d1 d2 d3 : MeasurementDirection) :
+  apply f d1 = one ∧ apply f d2 = one → IsMutuallyPerpendicular d1 d2 d3 → apply f d3 = zero :=
+by
+  intro hone hperp
+  have hin : [apply f d1, apply f d2, apply f d3] ∈ ValidThriples := f.property d1 d2 d3 hperp
+  rw [ValidThriples] at hin ; simp at hin
+  cases hin with
+  | inl heq =>
+    rw [hone.left] at heq
+    have hnonsense : one = zero := heq.left
+    contradiction
+  | inr heq => cases heq with
+    | inl heq =>
+      rw [hone.right] at heq
+      have hnonsense : one = zero := heq.right.left
+      contradiction
+    | inr heq =>
+      exact heq.right.right
 
 end FreeWillLean
