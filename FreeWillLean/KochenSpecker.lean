@@ -28,7 +28,7 @@ macro_rules
        fin_cases i <;> fin_cases j
        all_goals { simp; first | (exact rfl) | exact Eq.symm (neg_eq_iff_eq_neg.mp rfl)}))
 
-/-- Measurement directions for Kochen-Specker construction -/
+/-- Measurement directions for Kochen-Specker construction. Naming based on the position/role in the proof -/
 
 noncomputable def x : MeasurementDirection := ⟨![1, 0, 0], by vec_norm⟩
 noncomputable def y : MeasurementDirection := ⟨![0, 1, 0], by vec_norm⟩
@@ -155,7 +155,7 @@ by
   rw [IsPerpendicular]
   simp [d2, e4]  ; field_simp ; ring_nf ; norm_num ; ring
 
-/-- O3 group rotations -/
+/-- O3 group rotations. To be used for WLOG arguments -/
 
 def rotxyz_yxz : O3 :=
   {
@@ -183,7 +183,7 @@ def rotxyz_xnzny : O3 :=
 
 /-- Main Kochen-Specker theorem steps -/
 
-/- Step 1: Existence of a 101-function that assigns zero to x -/
+/- Step 1: Existence of a `OneZeroOneFunc` implies existence of a `OneZeroOneFunc` that assigns `zero` to `x` -/
 
 theorem kochen_specker_step_1 (f : OneZeroOneFunc):
   ∃ f : OneZeroOneFunc,  apply f x = zero :=
@@ -208,7 +208,7 @@ by
       rw [hrotn]
       exact heq.right.right
 
-/- Step 2: Existence of a 101-function that assigns zero to x and b1 -/
+/- Step 2: Result of `kochen_specker_step_1` implies existence of a `OneZeroOneFunc` that assigns `zero` to `x` and `b1` -/
 
 theorem kochen_specker_step_2 (f : OneZeroOneFunc) (hx : apply f x = zero) :
   ∃ f : OneZeroOneFunc, apply f x = zero ∧ apply f b1 = zero :=
@@ -236,7 +236,7 @@ by
       rw [hrotxx, hrotb1b2]
       apply And.intro hx heq.right.right
 
-/- Step 3: Existence of a 101-function that assigns zero to x, b1, and b3 -/
+/- Step 3: Result of `kochen_specker_step_2` implies existence of a `OneZeroOneFunc` that assigns `zero` to `x`, `b1`, and `b3` -/
 
 theorem kochen_specker_step_3 (f : OneZeroOneFunc) (hx : apply f x = zero) (hb1 : apply f b1 = zero) :
   ∃ f : OneZeroOneFunc, apply f x = zero ∧ apply f b1 = zero ∧ apply f b3 = zero :=
@@ -267,7 +267,7 @@ by
       rw [hrotxx, hrotb1b1, hrotb3b4]
       apply And.intro hx (And.intro hb1 heq.right.right)
 
-/- Step 4: Derive a contradiction -/
+/- Step 4: Result of `kochen_specker_step_3` implies a contradiction -/
 
 theorem kochen_specker_step_4 (f : OneZeroOneFunc) (hx : apply f x = zero) (hb1 : apply f b1 = zero) (hb3 : apply f b3 = zero) :
   False :=
@@ -296,7 +296,7 @@ by
     apply perp_one_one_implies_zero f e1 e4 f2 (And.intro he1 he4) perp_e1e4f2
   have hf2_contradiction : apply f f2  = one := by
     apply perp_zero_implies_one f f1 f2 hf1 perp_f1f2
-
+  -- now we have zero = apply f f2 = one. Use this to show a contradiction
   rw [hf2] at hf2_contradiction
   contradiction
 

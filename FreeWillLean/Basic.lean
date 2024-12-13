@@ -34,6 +34,7 @@ def MeasurementDirection : Type :=
 def MeasurementDirection.index (d : MeasurementDirection) (i : Fin 3) : ℝ :=
   d.val i
 
+/- "d[i]" gives the ith element in a MeasurementDirection -/
 notation d "[" i "]" => MeasurementDirection.index d i
 
 theorem MeasurementDirection.norm_def (v : MeasurementDirection) :
@@ -61,7 +62,7 @@ def IsMutuallyPerpendicular(d1 d2 d3 : MeasurementDirection) : Prop :=
 def ValidThriples : List (List SpinMeasurement) :=
   [[zero, one, one], [one, zero, one], [one, one, zero]]
 
-/-- One-Zero-One functions and their properties -/
+/-- One-Zero-One functions. The Kochen-Specker paradox states that the `OneZeroOneFunc` Type is empty -/
 
 def IsOneZeroOneFunc (f : MeasurementDirection → SpinMeasurement) : Prop :=
   ∀ d1 d2 d3 : MeasurementDirection, IsMutuallyPerpendicular d1 d2 d3 → [f d1, f d2, f d3] ∈ ValidThriples
@@ -72,7 +73,7 @@ def OneZeroOneFunc : Type :=
 def apply (f : OneZeroOneFunc) (a : MeasurementDirection) : SpinMeasurement :=
   f.val a
 
-/-- O3 group definitions and properties -/
+/-- O3 (orthogonal group) definitions and properties -/
 
 structure O3 where
   matrix : Matrix (Fin 3) (Fin 3) ℝ
@@ -81,14 +82,19 @@ structure O3 where
 instance : Coe O3 (Matrix (Fin 3) (Fin 3) ℝ) :=
  {coe := fun m => m.matrix}
 
+/- Transformation under O3 preserves the dot product between vectors -/
+
 theorem O3.dot_product_preservation (v1 v2 : Fin 3 → ℝ) (m : O3) :
   (m.matrix *ᵥ v1) ⬝ᵥ (m *ᵥ v2) = v1 ⬝ᵥ v2 :=
 by
-  have horth : mᵀ * m.matrix = 1 := by apply (Iff.mp (Matrix.mem_orthogonalGroup_iff' (Fin 3) ℝ)) m.is_orth
+  have horth : mᵀ * m.matrix = 1 :=
+    by apply (Iff.mp (Matrix.mem_orthogonalGroup_iff' (Fin 3) ℝ)) m.is_orth
   calc
     m *ᵥ v1 ⬝ᵥ m *ᵥ v2  = (m *ᵥ v1) ᵥ* m ⬝ᵥ v2 := by exact Matrix.dotProduct_mulVec (m *ᵥ v1) m.matrix v2
     _ = v1 ᵥ* (mᵀ * m.matrix) ⬝ᵥ v2 := by rw [Matrix.vecMul_mulVec]
     _ = v1 ⬝ᵥ v2 := by simp [horth]
+
+/- Transformation under 03 preserves vector norms -/
 
 theorem O3.norm_preservation (v : Fin 3 → ℝ) (m : O3) :
   SquaredNorm (m *ᵥ v) = SquaredNorm v :=
@@ -122,15 +128,16 @@ def O3.compose_OneZeroOneFunc (f : OneZeroOneFunc) (m : O3) : OneZeroOneFunc :=
   ⟨f.val ∘ m.function, by exact O3.OneZeroOneFunc_invariance f.val m f.property⟩
 
 /-- Cross product definition, along with a proof that it preserves norm when acting on perpendicular unit vectors.
+(surprisingly, I was not able to find an equivalent lemma in Mathlib)
 This is used in `perp_zero_implies_one` to "complete the basis" given two orthonormal vectors -/
 
 def CrossProduct (d1 d2 : MeasurementDirection) (hperp : IsPerpendicular d1 d2): MeasurementDirection :=
   ⟨!₂[d1[1] * d2[2] - d1[2] * d2[1], d1[2] * d2[0] - d1[0] * d2[2], d1[0] * d2[1] - d1[1] * d2[0]],
-  by
+  by --proof that norm is conserved
     simp
     rw [IsPerpendicular, Matrix.dotProduct] at hperp
     repeat rw [Fin.sum_univ_succ] at *; simp at * ; ring_nf at *
-
+    -- placeholders for notational convinience
     let a := d1[0]
     let b := d1[1]
     let c := d1[2]
@@ -158,10 +165,13 @@ def CrossProduct (d1 d2 : MeasurementDirection) (hperp : IsPerpendicular d1 d2):
 
 /-- Helper lemmas based on properties of One-Zero-One functions -/
 
+/- Any direction perpendicular to one assgined `zero` must be assigned `one` -/
+
 theorem perp_zero_implies_one (f : OneZeroOneFunc) (d1 d2 : MeasurementDirection) :
   apply f d1 = zero → IsPerpendicular d1 d2 → apply f d2 = one :=
 by
   intro hd1z hperp12
+  -- Construct the third perpendicular vector using `CrossProduct` so that we can exploit the `OneZeroOneFunc` definition
   have hperp13 : IsPerpendicular d1 (CrossProduct d1 d2 hperp12) := by
     rw [IsPerpendicular, CrossProduct, Matrix.dotProduct] ; simp [MeasurementDirection.index]
     rw [Fin.sum_univ_succ, Fin.sum_univ_succ, Fin.sum_univ_succ]; simp ; ring
@@ -177,6 +187,7 @@ by
   rw [ValidThriples] at hvalidthrip ; simp at hvalidthrip
   exact hvalidthrip.left
 
+/- Any direction mutually perpendicular to two assgined `one` must be assigned `zero` -/
 theorem perp_one_one_implies_zero (f : OneZeroOneFunc) ( d1 d2 d3 : MeasurementDirection) :
   apply f d1 = one ∧ apply f d2 = one → IsMutuallyPerpendicular d1 d2 d3 → apply f d3 = zero :=
 by
